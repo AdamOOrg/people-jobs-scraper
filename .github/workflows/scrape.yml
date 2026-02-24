@@ -1,0 +1,52 @@
+name: Weekly Job Scraper
+
+on:
+  # Run every Tuesday at 1pm GMT
+  schedule:
+    - cron: '0 13 * * 2'
+  
+  # Also allow manual trigger (click "Run workflow" in GitHub)
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run scraper
+        run: node index.js
+        env:
+          # Puppeteer needs these on CI
+          PUPPETEER_ARGS: '--no-sandbox --disable-setuid-sandbox'
+
+      - name: Upload to Google Sheets
+        run: node upload-to-sheets.js
+        env:
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
+          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
+          GOOGLE_SHEET_NAME: 'Jobs'
+
+      - name: Upload output as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: job-results-${{ github.run_number }}
+          path: output/
+          retention-days: 30
+
+      - name: Print LinkedIn post draft
+        run: |
+          echo "=================================="
+          echo "📣 LINKEDIN POST DRAFT:"
+          echo "=================================="
+          cat output/linkedin-post-*.txt 2>/dev/null || echo "No post generated"
