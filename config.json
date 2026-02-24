@@ -1,0 +1,48 @@
+{
+  "roles": [
+    "VP People",
+    "VP of People",
+    "Vice President People",
+    "Vice President of People",
+    "Head of People",
+    "Chief People Officer",
+    "CPO People",
+    "People Director",
+    "Director of People",
+    "People Lead",
+    "People Manager",
+    "People Partner",
+    "People Operations Manager",
+    "Head of People Operations",
+    "People Ops Lead",
+    "People Operations Lead",
+    "Director People Operations"
+  ],
+  "platforms": [
+    {
+      "name": "Ashby",
+      "domain": "jobs.ashby.io"
+    },
+    {
+      "name": "Workable",
+      "domain": "apply.workable.com"
+    }
+  ],
+  "salaryIndicators": [
+    "salary",
+    "£",
+    "$",
+    "€",
+    "compensation",
+    "OTE",
+    "per annum",
+    "p.a.",
+    "base pay"
+  ],
+  "excludeTerms": [
+    "internship",
+    "intern",
+    "volunteer",
+    "unpaid"
+  ]
+}

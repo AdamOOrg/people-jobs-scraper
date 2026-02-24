@@ -1,0 +1,17 @@
+{
+  "name": "people-jobs-scraper",
+  "version": "1.0.0",
+  "description": "Weekly scraper for People/HR leadership roles with salary transparency. Outputs to CSV and LinkedIn post format.",
+  "main": "index.js",
+  "scripts": {
+    "scrape": "node index.js",
+    "upload": "node upload-to-sheets.js",
+    "start": "node index.js && node upload-to-sheets.js"
+  },
+  "dependencies": {
+    "googleapis": "^129.0.0",
+    "puppeteer": "^21.6.0"
+  },
+  "author": "",
+  "license": "MIT"
+}
