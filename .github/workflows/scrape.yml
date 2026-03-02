@@ -30,13 +30,6 @@ jobs:
       - name: Run scraper
         run: node index.js
 
-      - name: Upload to Google Sheets
-        run: node upload-to-sheets.js
-        env:
-          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
-          GOOGLE_SERVICE_ACCOUNT_KEY: ${{ secrets.GOOGLE_SERVICE_ACCOUNT_KEY }}
-          GOOGLE_SHEET_NAME: 'Jobs'
-
       - name: Upload output as artifact
         uses: actions/upload-artifact@v4
         with:
