@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "googleapis": "^129.0.0",
-    "puppeteer": "^21.6.0"
+    "puppeteer-core": "^24.0.0"
   },
   "author": "",
   "license": "MIT"
