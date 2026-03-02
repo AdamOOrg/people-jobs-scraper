@@ -1,7 +1,7 @@
 name: Weekly Job Scraper
 
 on:
-  # Run every Tuesday at 1pm GMT
+  # Run every Tuesday at 1pm GMT/UTC
   schedule:
     - cron: '0 13 * * 2'
   
@@ -24,11 +24,11 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Verify Chrome is available
+        run: google-chrome-stable --version || google-chrome --version || echo "Chrome not found"
+
       - name: Run scraper
         run: node index.js
-        env:
-          # Puppeteer needs these on CI
-          PUPPETEER_ARGS: '--no-sandbox --disable-setuid-sandbox'
 
       - name: Upload to Google Sheets
         run: node upload-to-sheets.js
