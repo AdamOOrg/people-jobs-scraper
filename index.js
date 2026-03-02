@@ -1,5 +1,5 @@
 /**
- * ðŸ” Job Scraper for People/HR Leadership Roles
+ * 🔍 Job Scraper for People/HR Leadership Roles
  * 
  * Searches Ashby & Workable ATS platforms for roles with salaries shown.
  * Outputs results to CSV (for Google Sheets) and a LinkedIn post draft.
@@ -15,16 +15,12 @@ const puppeteer = require('puppeteer-core');
 
 function findChromePath() {
   const fs = require('fs');
-  // Common Chrome/Chromium paths
   const paths = [
-    // GitHub Actions (Ubuntu)
     '/usr/bin/google-chrome-stable',
     '/usr/bin/google-chrome',
     '/usr/bin/chromium-browser',
     '/usr/bin/chromium',
-    // Mac
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    // Windows
     'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
     'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
   ];
@@ -45,9 +41,9 @@ const config = require('./config.json');
 // CONFIGURATION
 // ============================================================
 
-const SEARCH_DELAY_MS = 3000; // Delay between Google searches to avoid rate limiting
-const PAGE_LOAD_TIMEOUT = 15000; // Max time to wait for a page to load
-const MAX_RESULTS_PER_QUERY = 20; // Google results to check per search query
+const SEARCH_DELAY_MS = 3000;
+const PAGE_LOAD_TIMEOUT = 15000;
+const MAX_RESULTS_PER_QUERY = 20;
 
 // ============================================================
 // SEARCH QUERIES BUILDER
@@ -58,11 +54,7 @@ function buildSearchQueries() {
 
   for (const role of config.roles) {
     for (const platform of config.platforms) {
-      // Build a Google search query targeting the ATS platform
-      // We search for the role title + "salary" or currency indicators + site restriction
       const siteFilter = `site:${platform.domain}`;
-      
-      // Query with salary indicators
       const salaryTerms = config.salaryIndicators.join(' OR ');
       queries.push({
         query: `"${role}" (${salaryTerms}) ${siteFilter}`,
@@ -82,7 +74,6 @@ function buildSearchQueries() {
 async function searchGoogle(browser, query) {
   const page = await browser.newPage();
   
-  // Set a realistic user agent
   await page.setUserAgent(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
@@ -94,7 +85,6 @@ async function searchGoogle(browser, query) {
     
     await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: PAGE_LOAD_TIMEOUT });
 
-    // Extract search result links
     const links = await page.evaluate(() => {
       const anchors = document.querySelectorAll('div#search a[href]');
       const urls = [];
@@ -104,12 +94,12 @@ async function searchGoogle(browser, query) {
           urls.push(href);
         }
       });
-      return [...new Set(urls)]; // deduplicate
+      return [...new Set(urls)];
     });
 
     results.push(...links);
   } catch (error) {
-    console.log(`âš ï¸  Search failed for query: ${query.substring(0, 60)}... - ${error.message}`);
+    console.log(`⚠️  Search failed for query: ${query.substring(0, 60)}... - ${error.message}`);
   } finally {
     await page.close();
   }
@@ -124,8 +114,6 @@ async function searchGoogle(browser, query) {
 async function scrapeAshbyJob(page, url) {
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_LOAD_TIMEOUT });
-    
-    // Wait for content to render
     await page.waitForSelector('body', { timeout: 5000 });
     
     const jobData = await page.evaluate(() => {
@@ -134,17 +122,14 @@ async function scrapeAshbyJob(page, url) {
         return el ? el.textContent.trim() : '';
       };
 
-      // Ashby job pages typically have structured content
       const title = getText('h1') || getText('[data-testid="job-title"]') || '';
       const bodyText = document.body.innerText || '';
       
-      // Try to extract company name from various Ashby layouts
       const company = getText('[data-testid="company-name"]') 
         || getText('.ashby-job-posting-company-name')
         || (document.title ? document.title.split(' - ').pop()?.split(' at ').pop()?.trim() : '')
         || '';
 
-      // Extract location
       const location = getText('[data-testid="job-location"]')
         || getText('.ashby-job-posting-location')
         || '';
@@ -154,7 +139,7 @@ async function scrapeAshbyJob(page, url) {
 
     return jobData;
   } catch (error) {
-    console.log(`âš ï¸  Failed to scrape Ashby page: ${url} - ${error.message}`);
+    console.log(`⚠️  Failed to scrape Ashby page: ${url} - ${error.message}`);
     return null;
   }
 }
@@ -162,7 +147,6 @@ async function scrapeAshbyJob(page, url) {
 async function scrapeWorkableJob(page, url) {
   try {
     await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_LOAD_TIMEOUT });
-    
     await page.waitForSelector('body', { timeout: 5000 });
 
     const jobData = await page.evaluate(() => {
@@ -188,7 +172,7 @@ async function scrapeWorkableJob(page, url) {
 
     return jobData;
   } catch (error) {
-    console.log(`âš ï¸  Failed to scrape Workable page: ${url} - ${error.message}`);
+    console.log(`⚠️  Failed to scrape Workable page: ${url} - ${error.message}`);
     return null;
   }
 }
@@ -209,20 +193,13 @@ async function scrapeJobPage(page, url) {
 function extractSalary(text) {
   if (!text) return null;
 
-  // Common salary patterns
   const patterns = [
-    // $120,000 - $150,000 or $120k - $150k
-    /[\$Â£â‚¬]\s?[\d,]+[kK]?\s*[-â€“to]+\s*[\$Â£â‚¬]?\s?[\d,]+[kK]?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))?/gi,
-    // $120,000+ or Â£80k+
-    /[\$Â£â‚¬]\s?[\d,]+[kK]?\+?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))/gi,
-    // Salary: $120,000
-    /(?:salary|compensation|pay|comp)[:\s]+[\$Â£â‚¬]\s?[\d,]+[kK]?/gi,
-    // 120,000 - 150,000 GBP/USD/EUR
-    /[\d,]+[kK]?\s*[-â€“to]+\s*[\d,]+[kK]?\s*(?:GBP|USD|EUR|AUD|CAD|NZD)/gi,
-    // OTE patterns
-    /(?:OTE|on[- ]target[- ]earnings?)[:\s]*[\$Â£â‚¬]\s?[\d,]+[kK]?/gi,
-    // Base + bonus patterns
-    /(?:base)[:\s]*[\$Â£â‚¬]\s?[\d,]+[kK]?/gi,
+    /[\$£€]\s?[\d,]+[kK]?\s*[-–to]+\s*[\$£€]?\s?[\d,]+[kK]?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))?/gi,
+    /[\$£€]\s?[\d,]+[kK]?\+?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))/gi,
+    /(?:salary|compensation|pay|comp)[:\s]+[\$£€]\s?[\d,]+[kK]?/gi,
+    /[\d,]+[kK]?\s*[-–to]+\s*[\d,]+[kK]?\s*(?:GBP|USD|EUR|AUD|CAD|NZD)/gi,
+    /(?:OTE|on[- ]target[- ]earnings?)[:\s]*[\$£€]\s?[\d,]+[kK]?/gi,
+    /(?:base)[:\s]*[\$£€]\s?[\d,]+[kK]?/gi,
   ];
 
   for (const pattern of patterns) {
@@ -235,37 +212,33 @@ function extractSalary(text) {
   return null;
 }
 
-function hasSalaryInfo(text) {
-  return extractSalary(text) !== null;
-}
-
 // ============================================================
 // LINKEDIN POST FORMATTER
 // ============================================================
 
 function formatLinkedInPost(jobs, weekDate) {
-  let post = `ðŸ” This week's People & HR leadership roles with salaries (w/c ${weekDate})\n\n`;
+  let post = `🔍 This week's People & HR leadership roles with salaries (w/c ${weekDate})\n\n`;
   post += `Found ${jobs.length} role${jobs.length === 1 ? '' : 's'} with transparent pay:\n\n`;
 
   jobs.forEach((job, index) => {
     post += `${index + 1}. ${job.title}`;
-    if (job.company) post += ` â€” ${job.company}`;
+    if (job.company) post += ` — ${job.company}`;
     post += `\n`;
-    post += `   ðŸ’° ${job.salary}\n`;
-    if (job.location) post += `   ðŸ“ ${job.location}\n`;
-    post += `   ðŸ”— ${job.url}\n\n`;
+    post += `   💰 ${job.salary}\n`;
+    if (job.location) post += `   📍 ${job.location}\n`;
+    post += `   🔗 ${job.url}\n\n`;
   });
 
   post += `---\n`;
-  post += `â™»ï¸ Repost to help someone in your network find their next role.\n`;
-  post += `ðŸ’¬ Know of other roles with salaries shown? Drop them in the comments!\n\n`;
+  post += `♻️ Repost to help someone in your network find their next role.\n`;
+  post += `💬 Know of other roles with salaries shown? Drop them in the comments!\n\n`;
   post += `#SalaryTransparency #PeopleLeadership #HRJobs #Hiring`;
 
   return post;
 }
 
 // ============================================================
-// CSV OUTPUT (for Google Sheets)
+// CSV OUTPUT
 // ============================================================
 
 function generateCSV(jobs, weekDate) {
@@ -290,7 +263,6 @@ function generateCSV(jobs, weekDate) {
 function deduplicateJobs(jobs) {
   const seen = new Set();
   return jobs.filter(job => {
-    // Deduplicate by URL (stripped of query params)
     const cleanUrl = job.url.split('?')[0].toLowerCase();
     if (seen.has(cleanUrl)) return false;
     seen.add(cleanUrl);
@@ -303,14 +275,13 @@ function deduplicateJobs(jobs) {
 // ============================================================
 
 async function main() {
-  console.log('ðŸš€ Starting job scraper...\n');
+  console.log('🚀 Starting job scraper...\n');
   
   const weekDate = new Date().toISOString().split('T')[0];
   const queries = buildSearchQueries();
   
-  console.log(`ðŸ“‹ Built ${queries.length} search queries across ${config.platforms.length} platforms\n`);
+  console.log(`📋 Built ${queries.length} search queries across ${config.platforms.length} platforms\n`);
 
-  // Launch browser
   const browser = await puppeteer.launch({
     headless: 'new',
     executablePath: CHROME_PATH,
@@ -324,8 +295,7 @@ async function main() {
 
   const allJobUrls = [];
 
-  // Step 1: Collect URLs from Google searches
-  console.log('ðŸ”Ž Step 1: Searching Google for job listings...\n');
+  console.log('🔎 Step 1: Searching Google for job listings...\n');
   
   for (const searchQuery of queries) {
     console.log(`  Searching: "${searchQuery.role}" on ${searchQuery.platform}...`);
@@ -340,15 +310,13 @@ async function main() {
       });
     });
 
-    console.log(`  â†’ Found ${urls.length} links`);
+    console.log(`  → Found ${urls.length} links`);
     
-    // Be polite to Google
     await new Promise(resolve => setTimeout(resolve, SEARCH_DELAY_MS));
   }
 
-  console.log(`\nðŸ“Š Total URLs collected: ${allJobUrls.length}`);
+  console.log(`\n📊 Total URLs collected: ${allJobUrls.length}`);
 
-  // Deduplicate URLs
   const uniqueUrls = [];
   const seenUrls = new Set();
   for (const item of allJobUrls) {
@@ -359,10 +327,9 @@ async function main() {
     }
   }
 
-  console.log(`ðŸ“Š Unique URLs to scrape: ${uniqueUrls.length}\n`);
+  console.log(`📊 Unique URLs to scrape: ${uniqueUrls.length}\n`);
 
-  // Step 2: Visit each job page and extract data
-  console.log('ðŸ“„ Step 2: Scraping job pages...\n');
+  console.log('📄 Step 2: Scraping job pages...\n');
   
   const page = await browser.newPage();
   await page.setUserAgent(
@@ -388,54 +355,47 @@ async function main() {
           platform: item.platform,
           url: item.url,
         });
-        console.log(`  âœ… Found salary: ${salary}`);
+        console.log(`  ✅ Found salary: ${salary}`);
       } else {
-        console.log(`  âŒ No salary found`);
+        console.log(`  ❌ No salary found`);
       }
     } else {
-      console.log(`  âŒ Could not extract page data`);
+      console.log(`  ❌ Could not extract page data`);
     }
 
-    // Small delay between page loads
     await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
   await page.close();
   await browser.close();
 
-  // Step 3: Deduplicate and output results
   const finalJobs = deduplicateJobs(allJobs);
   
-  console.log(`\nâœ¨ Final results: ${finalJobs.length} jobs with salaries\n`);
+  console.log(`\n✨ Final results: ${finalJobs.length} jobs with salaries\n`);
 
-  // Create output directory
   const outputDir = path.join(__dirname, 'output');
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  // Save CSV
   const csv = generateCSV(finalJobs, weekDate);
   const csvPath = path.join(outputDir, `jobs-${weekDate}.csv`);
   fs.writeFileSync(csvPath, csv);
-  console.log(`ðŸ“ CSV saved: ${csvPath}`);
+  console.log(`📁 CSV saved: ${csvPath}`);
 
-  // Save LinkedIn post draft
   const linkedInPost = formatLinkedInPost(finalJobs, weekDate);
   const postPath = path.join(outputDir, `linkedin-post-${weekDate}.txt`);
   fs.writeFileSync(postPath, linkedInPost);
-  console.log(`ðŸ“ LinkedIn post draft saved: ${postPath}`);
+  console.log(`📝 LinkedIn post draft saved: ${postPath}`);
 
-  // Also print the LinkedIn post to console
   console.log('\n' + '='.repeat(60));
-  console.log('ðŸ“£ LINKEDIN POST DRAFT:');
+  console.log('📣 LINKEDIN POST DRAFT:');
   console.log('='.repeat(60) + '\n');
   console.log(linkedInPost);
 
-  // Save a summary JSON for the Google Sheets upload step
   const summaryPath = path.join(outputDir, `summary-${weekDate}.json`);
   fs.writeFileSync(summaryPath, JSON.stringify({ date: weekDate, jobs: finalJobs }, null, 2));
-  console.log(`\nðŸ“Š Summary JSON saved: ${summaryPath}`);
+  console.log(`\n📊 Summary JSON saved: ${summaryPath}`);
 
   return finalJobs;
 }
