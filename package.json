@@ -1,14 +1,12 @@
 {
   "name": "people-jobs-scraper",
-  "version": "1.0.0",
-  "description": "Weekly scraper for People/HR leadership roles with salary transparency.",
+  "version": "2.0.0",
+  "description": "Weekly scraper for People/HR leadership roles. Uses Google PSE to search Ashby and Workable.",
   "main": "index.js",
   "scripts": {
     "scrape": "node index.js"
   },
-  "dependencies": {
-    "puppeteer-core": "^24.0.0"
-  },
+  "dependencies": {},
   "author": "",
   "license": "MIT"
 }

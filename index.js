@@ -1,64 +1,114 @@
 /**
  * 🔍 Job Scraper for People/HR Leadership Roles
  * 
- * Searches Ashby & Workable ATS platforms for roles with salaries shown.
- * Outputs results to CSV (for Google Sheets) and a LinkedIn post draft.
+ * Uses Google Programmable Search Engine (free, 100 queries/day)
+ * to find jobs on Ashby & Workable with salary info.
  * 
- * Runs weekly via GitHub Actions.
+ * No npm dependencies — uses Node.js built-in https.
  */
 
-const puppeteer = require('puppeteer-core');
-
-// ============================================================
-// BROWSER LAUNCH HELPER
-// ============================================================
-
-function findChromePath() {
-  const fs = require('fs');
-  const paths = [
-    '/usr/bin/google-chrome-stable',
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser',
-    '/usr/bin/chromium',
-    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-    'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-    'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  ];
-  
-  for (const p of paths) {
-    if (fs.existsSync(p)) return p;
-  }
-  
-  throw new Error('Chrome not found! Install Google Chrome or set CHROME_PATH environment variable.');
-}
-
-const CHROME_PATH = process.env.CHROME_PATH || findChromePath();
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const config = require('./config.json');
 
 // ============================================================
-// CONFIGURATION
+// CONFIG FROM ENVIRONMENT
 // ============================================================
 
-const SEARCH_DELAY_MS = 3000;
-const PAGE_LOAD_TIMEOUT = 15000;
-const MAX_RESULTS_PER_QUERY = 20;
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
+const GOOGLE_CSE_ID = process.env.GOOGLE_CSE_ID;
+const SEARCH_DELAY_MS = 2000;
+const FETCH_DELAY_MS = 1000;
+
+if (!GOOGLE_API_KEY || !GOOGLE_CSE_ID) {
+  console.error('❌ Missing environment variables!');
+  console.error('   Set GOOGLE_API_KEY and GOOGLE_CSE_ID');
+  console.error('   See SETUP.md for instructions.');
+  process.exit(1);
+}
 
 // ============================================================
-// SEARCH QUERIES BUILDER
+// HTTPS HELPERS (zero dependencies)
+// ============================================================
+
+function httpGet(url) {
+  return new Promise((resolve, reject) => {
+    https.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'text/html,application/json',
+      },
+      timeout: 15000,
+    }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        httpGet(res.headers.location).then(resolve).catch(reject);
+        return;
+      }
+      let data = '';
+      res.on('data', chunk => data += chunk);
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    }).on('error', reject).on('timeout', function() { this.destroy(); reject(new Error('Timeout')); });
+  });
+}
+
+// ============================================================
+// GOOGLE PROGRAMMABLE SEARCH
+// ============================================================
+
+async function googleSearch(query, start = 1) {
+  const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CSE_ID}&q=${encodeURIComponent(query)}&start=${start}&num=10`;
+  
+  const response = await httpGet(url);
+  
+  try {
+    const data = JSON.parse(response.body);
+    
+    if (data.error) {
+      console.log(`    ⚠️  API error: ${data.error.message}`);
+      return [];
+    }
+    
+    if (!data.items || data.items.length === 0) {
+      return [];
+    }
+    
+    return data.items.map(item => ({
+      url: item.link,
+      title: item.title,
+      snippet: item.snippet || '',
+    }));
+  } catch (e) {
+    console.log(`    ⚠️  Parse error: ${e.message}`);
+    return [];
+  }
+}
+
+// ============================================================
+// BUILD SEARCH QUERIES
 // ============================================================
 
 function buildSearchQueries() {
   const queries = [];
 
-  for (const role of config.roles) {
+  // Group similar roles to reduce query count
+  const roleGroups = [
+    { label: 'VP People', terms: '"VP People" OR "VP of People" OR "Vice President People"' },
+    { label: 'Head of People', terms: '"Head of People"' },
+    { label: 'Chief People Officer', terms: '"Chief People Officer" OR "CPO"' },
+    { label: 'People Director', terms: '"People Director" OR "Director of People"' },
+    { label: 'People Lead/Manager', terms: '"People Lead" OR "People Manager"' },
+    { label: 'People Partner', terms: '"People Partner"' },
+    { label: 'People Operations', terms: '"People Operations" OR "People Ops"' },
+    { label: 'Head of HR', terms: '"Head of HR" OR "HR Director" OR "VP HR"' },
+  ];
+
+  for (const group of roleGroups) {
     for (const platform of config.platforms) {
-      const siteFilter = `site:${platform.domain}`;
-      const salaryTerms = config.salaryIndicators.join(' OR ');
+      // Search with salary indicators
       queries.push({
-        query: `"${role}" (${salaryTerms}) ${siteFilter}`,
-        role: role,
+        query: `${group.terms} site:${platform.domain}`,
+        label: `${group.label} on ${platform.name}`,
         platform: platform.name,
       });
     }
@@ -68,122 +118,76 @@ function buildSearchQueries() {
 }
 
 // ============================================================
-// GOOGLE SEARCH VIA PUPPETEER
+// SCRAPE INDIVIDUAL JOB PAGES
 // ============================================================
 
-async function searchGoogle(browser, query) {
-  const page = await browser.newPage();
-  
-  await page.setUserAgent(
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  );
-
-  const results = [];
-
+async function scrapeJobPage(url) {
   try {
-    const searchUrl = `https://www.google.com/search?q=${encodeURIComponent(query)}&num=${MAX_RESULTS_PER_QUERY}`;
+    const response = await httpGet(url);
+    if (response.status !== 200) return null;
+
+    const html = response.body;
+
+    // Extract title from <h1> or <title>
+    const h1Match = html.match(/<h1[^>]*>(.*?)<\/h1>/si);
+    const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/si);
     
-    await page.goto(searchUrl, { waitUntil: 'networkidle2', timeout: PAGE_LOAD_TIMEOUT });
+    let title = '';
+    if (h1Match) title = stripHtml(h1Match[1]).trim();
+    if (!title && titleMatch) title = stripHtml(titleMatch[1]).split(' - ')[0].trim();
 
-    const links = await page.evaluate(() => {
-      const anchors = document.querySelectorAll('div#search a[href]');
-      const urls = [];
-      anchors.forEach(a => {
-        const href = a.href;
-        if (href && !href.includes('google.com') && !href.includes('webcache')) {
-          urls.push(href);
-        }
-      });
-      return [...new Set(urls)];
-    });
+    // Extract company from title tag or meta
+    let company = '';
+    if (titleMatch) {
+      company = extractCompanyFromTitle(stripHtml(titleMatch[1]));
+    }
+    const metaCompany = html.match(/property="og:site_name"\s+content="([^"]+)"/i);
+    if (!company && metaCompany) company = metaCompany[1];
 
-    results.push(...links);
+    // Extract location
+    let location = '';
+    const locPatterns = [
+      /data-testid="job-location"[^>]*>(.*?)</si,
+      /class="[^"]*location[^"]*"[^>]*>(.*?)</si,
+      /data-ui="job-location"[^>]*>(.*?)</si,
+    ];
+    for (const pat of locPatterns) {
+      const m = html.match(pat);
+      if (m) { location = stripHtml(m[1]).trim(); break; }
+    }
+
+    // Get full text for salary extraction (strip HTML tags)
+    const bodyText = stripHtml(html);
+
+    return { title, company, location, bodyText };
   } catch (error) {
-    console.log(`⚠️  Search failed for query: ${query.substring(0, 60)}... - ${error.message}`);
-  } finally {
-    await page.close();
-  }
-
-  return results;
-}
-
-// ============================================================
-// ATS PAGE SCRAPERS
-// ============================================================
-
-async function scrapeAshbyJob(page, url) {
-  try {
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_LOAD_TIMEOUT });
-    await page.waitForSelector('body', { timeout: 5000 });
-    
-    const jobData = await page.evaluate(() => {
-      const getText = (selector) => {
-        const el = document.querySelector(selector);
-        return el ? el.textContent.trim() : '';
-      };
-
-      const title = getText('h1') || getText('[data-testid="job-title"]') || '';
-      const bodyText = document.body.innerText || '';
-      
-      const company = getText('[data-testid="company-name"]') 
-        || getText('.ashby-job-posting-company-name')
-        || (document.title ? document.title.split(' - ').pop()?.split(' at ').pop()?.trim() : '')
-        || '';
-
-      const location = getText('[data-testid="job-location"]')
-        || getText('.ashby-job-posting-location')
-        || '';
-
-      return { title, company, location, bodyText };
-    });
-
-    return jobData;
-  } catch (error) {
-    console.log(`⚠️  Failed to scrape Ashby page: ${url} - ${error.message}`);
+    console.log(`    ⚠️  Failed to fetch: ${url.substring(0, 60)}... - ${error.message}`);
     return null;
   }
 }
 
-async function scrapeWorkableJob(page, url) {
-  try {
-    await page.goto(url, { waitUntil: 'networkidle2', timeout: PAGE_LOAD_TIMEOUT });
-    await page.waitForSelector('body', { timeout: 5000 });
-
-    const jobData = await page.evaluate(() => {
-      const getText = (selector) => {
-        const el = document.querySelector(selector);
-        return el ? el.textContent.trim() : '';
-      };
-
-      const title = getText('h1') || getText('[data-ui="job-title"]') || '';
-      const bodyText = document.body.innerText || '';
-      
-      const company = getText('[data-ui="company-name"]')
-        || getText('.company-name')
-        || (document.title ? document.title.split(' - ').pop()?.split(' at ').pop()?.trim() : '')
-        || '';
-
-      const location = getText('[data-ui="job-location"]')
-        || getText('.location')
-        || '';
-
-      return { title, company, location, bodyText };
-    });
-
-    return jobData;
-  } catch (error) {
-    console.log(`⚠️  Failed to scrape Workable page: ${url} - ${error.message}`);
-    return null;
-  }
+function stripHtml(html) {
+  return html
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
-async function scrapeJobPage(page, url) {
-  if (url.includes('ashby.io') || url.includes('ashbyhq.com')) {
-    return await scrapeAshbyJob(page, url);
-  } else if (url.includes('workable.com') || url.includes('apply.workable')) {
-    return await scrapeWorkableJob(page, url);
-  }
-  return null;
+function extractCompanyFromTitle(pageTitle) {
+  if (!pageTitle) return '';
+  const atMatch = pageTitle.match(/at\s+(.+?)(?:\s*[-|]|$)/i);
+  if (atMatch) return atMatch[1].trim();
+  const dashParts = pageTitle.split(' - ');
+  if (dashParts.length >= 2) return dashParts[dashParts.length - 1].trim();
+  return '';
 }
 
 // ============================================================
@@ -194,18 +198,29 @@ function extractSalary(text) {
   if (!text) return null;
 
   const patterns = [
+    // $120,000 - $150,000 or £80k - £100k
     /[\$£€]\s?[\d,]+[kK]?\s*[-–to]+\s*[\$£€]?\s?[\d,]+[kK]?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))?/gi,
+    // $120,000 per annum
     /[\$£€]\s?[\d,]+[kK]?\+?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))/gi,
-    /(?:salary|compensation|pay|comp)[:\s]+[\$£€]\s?[\d,]+[kK]?/gi,
+    // Salary: $120,000
+    /(?:salary|compensation|pay)[:\s]+[\$£€]\s?[\d,]+[kK]?/gi,
+    // 120,000 - 150,000 GBP/USD
     /[\d,]+[kK]?\s*[-–to]+\s*[\d,]+[kK]?\s*(?:GBP|USD|EUR|AUD|CAD|NZD)/gi,
+    // OTE: $200,000
     /(?:OTE|on[- ]target[- ]earnings?)[:\s]*[\$£€]\s?[\d,]+[kK]?/gi,
-    /(?:base)[:\s]*[\$£€]\s?[\d,]+[kK]?/gi,
   ];
 
   for (const pattern of patterns) {
     const matches = text.match(pattern);
     if (matches && matches.length > 0) {
-      return matches[0].trim();
+      // Filter out tiny amounts (likely not salaries)
+      const match = matches[0].trim();
+      const numbers = match.match(/[\d,]+/g);
+      if (numbers) {
+        const firstNum = parseInt(numbers[0].replace(/,/g, ''));
+        if (firstNum < 20 && !match.toLowerCase().includes('k')) continue;
+      }
+      return match;
     }
   }
 
@@ -213,7 +228,7 @@ function extractSalary(text) {
 }
 
 // ============================================================
-// LINKEDIN POST FORMATTER
+// OUTPUT FORMATTERS
 // ============================================================
 
 function formatLinkedInPost(jobs, weekDate) {
@@ -237,10 +252,6 @@ function formatLinkedInPost(jobs, weekDate) {
   return post;
 }
 
-// ============================================================
-// CSV OUTPUT
-// ============================================================
-
 function generateCSV(jobs, weekDate) {
   const headers = ['Date Found', 'Title', 'Company', 'Salary', 'Location', 'Platform', 'URL'];
   const rows = jobs.map(job => [
@@ -257,147 +268,167 @@ function generateCSV(jobs, weekDate) {
 }
 
 // ============================================================
-// DEDUPLICATION
-// ============================================================
-
-function deduplicateJobs(jobs) {
-  const seen = new Set();
-  return jobs.filter(job => {
-    const cleanUrl = job.url.split('?')[0].toLowerCase();
-    if (seen.has(cleanUrl)) return false;
-    seen.add(cleanUrl);
-    return true;
-  });
-}
-
-// ============================================================
 // MAIN
 // ============================================================
 
 async function main() {
   console.log('🚀 Starting job scraper...\n');
+  console.log('🔑 Using Google Programmable Search Engine API\n');
   
   const weekDate = new Date().toISOString().split('T')[0];
   const queries = buildSearchQueries();
   
-  console.log(`📋 Built ${queries.length} search queries across ${config.platforms.length} platforms\n`);
+  console.log(`📋 Built ${queries.length} search queries\n`);
 
-  const browser = await puppeteer.launch({
-    headless: 'new',
-    executablePath: CHROME_PATH,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-    ],
-  });
-
-  const allJobUrls = [];
-
-  console.log('🔎 Step 1: Searching Google for job listings...\n');
+  // Step 1: Search for job URLs
+  console.log('🔎 Step 1: Searching for job listings...\n');
   
+  const allResults = [];
+  let queryCount = 0;
+
   for (const searchQuery of queries) {
-    console.log(`  Searching: "${searchQuery.role}" on ${searchQuery.platform}...`);
+    console.log(`  ${searchQuery.label}...`);
+    queryCount++;
     
-    const urls = await searchGoogle(browser, searchQuery.query);
+    const results = await googleSearch(searchQuery.query);
     
-    urls.forEach(url => {
-      allJobUrls.push({
-        url,
-        searchRole: searchQuery.role,
+    results.forEach(r => {
+      allResults.push({
+        ...r,
         platform: searchQuery.platform,
       });
     });
 
-    console.log(`  → Found ${urls.length} links`);
+    console.log(`    → Found ${results.length} results`);
     
     await new Promise(resolve => setTimeout(resolve, SEARCH_DELAY_MS));
   }
 
-  console.log(`\n📊 Total URLs collected: ${allJobUrls.length}`);
+  console.log(`\n📊 API queries used: ${queryCount}/100 daily limit`);
+  console.log(`📊 Total results: ${allResults.length}`);
 
-  const uniqueUrls = [];
+  // Deduplicate by URL
   const seenUrls = new Set();
-  for (const item of allJobUrls) {
-    const clean = item.url.split('?')[0].toLowerCase();
-    if (!seenUrls.has(clean)) {
-      seenUrls.add(clean);
-      uniqueUrls.push(item);
-    }
-  }
+  const uniqueResults = allResults.filter(r => {
+    const clean = r.url.split('?')[0].toLowerCase();
+    if (seenUrls.has(clean)) return false;
+    seenUrls.add(clean);
+    return true;
+  });
 
-  console.log(`📊 Unique URLs to scrape: ${uniqueUrls.length}\n`);
+  console.log(`📊 Unique URLs to check: ${uniqueResults.length}\n`);
 
-  console.log('📄 Step 2: Scraping job pages...\n');
+  // Step 2: Visit each page and extract salary info
+  console.log('📄 Step 2: Checking job pages for salary info...\n');
   
-  const page = await browser.newPage();
-  await page.setUserAgent(
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-  );
-
   const allJobs = [];
 
-  for (const item of uniqueUrls) {
-    console.log(`  Scraping: ${item.url.substring(0, 80)}...`);
+  for (const result of uniqueResults) {
+    console.log(`  Checking: ${result.url.substring(0, 80)}...`);
     
-    const jobData = await scrapeJobPage(page, item.url);
+    // First check if salary info is in the Google snippet
+    let salary = extractSalary(result.snippet);
+    let jobData = null;
     
-    if (jobData && jobData.bodyText) {
-      const salary = extractSalary(jobData.bodyText);
+    if (!salary) {
+      // Need to fetch the full page
+      jobData = await scrapeJobPage(result.url);
       
-      if (salary) {
-        allJobs.push({
-          title: jobData.title || item.searchRole,
-          company: jobData.company || 'Unknown',
-          salary: salary,
-          location: jobData.location || 'Not specified',
-          platform: item.platform,
-          url: item.url,
-        });
-        console.log(`  ✅ Found salary: ${salary}`);
-      } else {
-        console.log(`  ❌ No salary found`);
+      if (jobData && jobData.bodyText) {
+        salary = extractSalary(jobData.bodyText);
       }
-    } else {
-      console.log(`  ❌ Could not extract page data`);
     }
 
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    const title = (jobData && jobData.title) || result.title.split(' - ')[0].trim() || '';
+    const company = (jobData && jobData.company) || extractCompanyFromTitle(result.title) || '';
+    const location = (jobData && jobData.location) || '';
+
+    allJobs.push({
+      title,
+      company,
+      salary: salary || null,
+      location: location || 'Not specified',
+      platform: result.platform,
+      url: result.url,
+    });
+
+    if (salary) {
+      console.log(`    ✅ Salary found: ${salary}`);
+    } else {
+      console.log(`    ❌ No salary listed`);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, FETCH_DELAY_MS));
   }
 
-  await page.close();
-  await browser.close();
+  // Split into salary / no-salary
+  const jobsWithSalary = allJobs.filter(j => j.salary);
+  const jobsWithoutSalary = allJobs.filter(j => !j.salary);
 
-  const finalJobs = deduplicateJobs(allJobs);
-  
-  console.log(`\n✨ Final results: ${finalJobs.length} jobs with salaries\n`);
+  console.log(`\n✨ Results:`);
+  console.log(`   ${jobsWithSalary.length} jobs WITH salary`);
+  console.log(`   ${jobsWithoutSalary.length} jobs without salary`);
 
+  // Create output directory
   const outputDir = path.join(__dirname, 'output');
   if (!fs.existsSync(outputDir)) {
     fs.mkdirSync(outputDir, { recursive: true });
   }
 
-  const csv = generateCSV(finalJobs, weekDate);
-  const csvPath = path.join(outputDir, `jobs-${weekDate}.csv`);
-  fs.writeFileSync(csvPath, csv);
-  console.log(`📁 CSV saved: ${csvPath}`);
+  // Save CSVs
+  if (allJobs.length > 0) {
+    const allCsv = generateCSV(allJobs, weekDate);
+    fs.writeFileSync(path.join(outputDir, `all-jobs-${weekDate}.csv`), allCsv);
+    console.log(`\n📁 All jobs CSV saved`);
+  }
 
-  const linkedInPost = formatLinkedInPost(finalJobs, weekDate);
-  const postPath = path.join(outputDir, `linkedin-post-${weekDate}.txt`);
-  fs.writeFileSync(postPath, linkedInPost);
-  console.log(`📝 LinkedIn post draft saved: ${postPath}`);
+  if (jobsWithSalary.length > 0) {
+    const salaryCsv = generateCSV(jobsWithSalary, weekDate);
+    fs.writeFileSync(path.join(outputDir, `salary-jobs-${weekDate}.csv`), salaryCsv);
+    console.log(`📁 Salary jobs CSV saved`);
+  }
 
-  console.log('\n' + '='.repeat(60));
-  console.log('📣 LINKEDIN POST DRAFT:');
-  console.log('='.repeat(60) + '\n');
-  console.log(linkedInPost);
+  // Save LinkedIn post
+  if (jobsWithSalary.length > 0) {
+    const post = formatLinkedInPost(jobsWithSalary, weekDate);
+    fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.txt`), post);
+    
+    console.log('\n' + '='.repeat(60));
+    console.log('📣 LINKEDIN POST DRAFT:');
+    console.log('='.repeat(60) + '\n');
+    console.log(post);
+  } else if (allJobs.length > 0) {
+    console.log('\n⚠️  No salary jobs found, but found roles without salary.');
+    console.log('    Check all-jobs CSV for the full list.');
+    
+    let post = `🔍 People & HR leadership roles this week (w/c ${weekDate})\n\n`;
+    post += `Found ${allJobs.length} role${allJobs.length === 1 ? '' : 's'} (salaries not always listed):\n\n`;
+    allJobs.slice(0, 15).forEach((job, i) => {
+      post += `${i + 1}. ${job.title}`;
+      if (job.company) post += ` — ${job.company}`;
+      post += `\n   🔗 ${job.url}\n\n`;
+    });
+    fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.txt`), post);
+  } else {
+    console.log('\n⚠️  No matching jobs found this week.');
+  }
 
-  const summaryPath = path.join(outputDir, `summary-${weekDate}.json`);
-  fs.writeFileSync(summaryPath, JSON.stringify({ date: weekDate, jobs: finalJobs }, null, 2));
-  console.log(`\n📊 Summary JSON saved: ${summaryPath}`);
+  // Save summary
+  fs.writeFileSync(path.join(outputDir, `summary-${weekDate}.json`), JSON.stringify({
+    date: weekDate,
+    stats: {
+      queriesUsed: queryCount,
+      totalResults: allResults.length,
+      uniqueUrls: uniqueResults.length,
+      withSalary: jobsWithSalary.length,
+      withoutSalary: jobsWithoutSalary.length,
+    },
+    jobsWithSalary,
+    allJobs,
+  }, null, 2));
+  console.log(`📊 Summary saved`);
 
-  return finalJobs;
+  return jobsWithSalary;
 }
 
 main().catch(console.error);

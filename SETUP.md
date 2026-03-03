@@ -1,126 +1,103 @@
-# 🔍 People Jobs Scraper — Setup Guide
+# 🔍 People Jobs Scraper — Setup Guide (v2)
 
-A weekly automated scraper that finds **People & HR leadership roles with salaries shown** on Ashby and Workable, then saves them to Google Sheets and generates a LinkedIn post draft.
+Finds People & HR leadership roles with salaries on Ashby and Workable, automatically every week.
 
----
+## How It Works
 
-## How It Works (Plain English)
-
-Every Monday at 8am UTC, GitHub runs your scraper automatically. It:
-
-1. Searches Google for your target roles on Ashby & Workable
-2. Visits each job page and checks if a salary is shown
-3. Collects matching jobs into a spreadsheet
-4. Generates a ready-to-post LinkedIn draft
-5. Saves everything to your Google Sheet
-
-**You** then review the results, tweak the LinkedIn post if needed, and hit publish. What used to take an hour+ now takes 5 minutes.
+1. Uses **Google Programmable Search Engine** (free, 100 searches/day) to find job listings
+2. Visits each job page to check for salary information
+3. Outputs a LinkedIn post draft + CSV of results
+4. Runs every Tuesday at 1pm GMT via GitHub Actions
 
 ---
 
-## 🚀 Setup (Step by Step)
+## Setup (3 parts)
 
-### Step 1: Create a GitHub Account (skip if you have one)
+### Part 1: Google Programmable Search Engine (10 mins)
 
-1. Go to [github.com](https://github.com) and sign up (free)
-2. Verify your email address
+This gives you free, reliable Google searches that won't get blocked.
 
-### Step 2: Create Your Repository
+#### Step 1: Create the Search Engine
 
-1. Click the **+** button (top right) → **New repository**
-2. Name it: `people-jobs-scraper`
-3. Set it to **Public** (so GitHub Actions is free)
-4. Check ✅ "Add a README file"
-5. Click **Create repository**
+1. Go to [programmablesearchengine.google.com](https://programmablesearchengine.google.com)
+2. Click **Get started** / **Add** to create a new search engine
+3. Fill in:
+   - **Name**: "Job Scraper"
+   - **What to search**: Select **"Search specific sites or pages"**
+   - Add these two sites:
+     - `jobs.ashby.io`
+     - `apply.workable.com`
+4. Click **Create**
+5. On the next page, copy your **Search Engine ID** (looks like `a1b2c3d4e5f6g7h8i`) — save this!
 
-### Step 3: Upload the Code
-
-1. In your new repo, click **Add file** → **Upload files**
-2. Drag and drop ALL the files from this project:
-   - `index.js`
-   - `config.json`
-   - `package.json`
-   - `upload-to-sheets.js`
-   - `.gitignore`
-3. Click **Commit changes**
-
-4. Now create the GitHub Actions folder:
-   - Click **Add file** → **Create new file**
-   - In the filename box, type: `.github/workflows/scrape.yml`
-   - Copy and paste the contents of the `.github/workflows/scrape.yml` file
-   - Click **Commit changes**
-
-### Step 4: Set Up Google Sheets (optional but recommended)
-
-This lets results auto-populate in a spreadsheet. Skip this if you just want the CSV/text output.
-
-#### 4a: Create a Google Cloud Service Account
+#### Step 2: Get an API Key
 
 1. Go to [console.cloud.google.com](https://console.cloud.google.com)
-2. Create a new project (call it "Job Scraper")
-3. In the left menu, go to **APIs & Services** → **Library**
-4. Search for **Google Sheets API** and click **Enable**
+2. Create a new project if you don't have one (call it "Job Scraper")
+3. Go to **APIs & Services** → **Library**
+4. Search for **"Custom Search API"** and click **Enable**
 5. Go to **APIs & Services** → **Credentials**
-6. Click **+ Create Credentials** → **Service Account**
-7. Name it "job-scraper-bot" → Click **Done**
-8. Click on the service account you just created
-9. Go to **Keys** tab → **Add Key** → **Create new key** → **JSON**
-10. A JSON file will download — **keep this safe, you'll need it**
+6. Click **+ Create Credentials** → **API Key**
+7. Copy the API key — save this!
 
-#### 4b: Create Your Google Sheet
+> **Cost**: Completely free for up to 100 searches per day. The scraper uses ~16 searches per run.
 
-1. Go to [sheets.google.com](https://sheets.google.com) and create a new spreadsheet
-2. Name it "People Jobs Tracker"
-3. Copy the spreadsheet ID from the URL:
-   ```
-   https://docs.google.com/spreadsheets/d/THIS_PART_IS_THE_ID/edit
-   ```
-4. **Share the spreadsheet** with your service account email:
-   - Click **Share**
-   - Paste the service account email (looks like `job-scraper-bot@your-project.iam.gserviceaccount.com`)
-   - Give it **Editor** access
-   - Click **Send**
+---
 
-#### 4c: Add Secrets to GitHub
+### Part 2: GitHub Repository
 
-1. In your GitHub repo, go to **Settings** → **Secrets and variables** → **Actions**
-2. Click **New repository secret**
-3. Add these two secrets:
+#### If starting fresh:
+
+1. Go to [github.com](https://github.com) → click **+** → **New repository**
+2. Name: `people-jobs-scraper`, set to **Public**, add a README
+3. Upload all the project files (index.js, config.json, package.json, etc.)
+4. Create `.github/workflows/scrape.yml`:
+   - Click **Add file** → **Create new file**
+   - Type `.github/workflows/scrape.yml` as the filename
+   - Paste the contents and commit
+
+#### If updating from v1:
+
+Replace these files in your repo (pencil icon → select all → paste → commit):
+- `index.js`
+- `config.json`
+- `package.json`
+- `.github/workflows/scrape.yml`
+
+You can delete `upload-to-sheets.js` (not needed yet).
+
+---
+
+### Part 3: Add Your API Secrets to GitHub
+
+1. In your GitHub repo → **Settings** → **Secrets and variables** → **Actions**
+2. Click **New repository secret** and add:
 
 | Name | Value |
 |------|-------|
-| `GOOGLE_SHEET_ID` | The spreadsheet ID from step 4b |
-| `GOOGLE_SERVICE_ACCOUNT_KEY` | The **entire contents** of the JSON key file from step 4a |
-
-### Step 5: Test It!
-
-1. In your GitHub repo, go to **Actions** tab
-2. Click on **Weekly Job Scraper** in the left sidebar
-3. Click **Run workflow** → **Run workflow** (green button)
-4. Wait 5-10 minutes for it to complete
-5. Click on the run to see the logs and download the output
+| `GOOGLE_API_KEY` | Your API key from Step 2 above |
+| `GOOGLE_CSE_ID` | Your Search Engine ID from Step 1 above |
 
 ---
 
-## 📝 Customising Your Searches
+## Test It!
 
-### Adding or Removing Roles
+1. Go to **Actions** tab in your repo
+2. Click **Weekly Job Scraper** → **Run workflow** → **Run workflow**
+3. Should complete in 2-5 minutes
+4. Check the logs and download results from the **Artifacts** section
 
-Edit `config.json` and update the `roles` array:
+---
 
-```json
-{
-  "roles": [
-    "VP People",
-    "Head of People",
-    "Your New Role Title Here"
-  ]
-}
-```
+## Customising
 
-### Adding More ATS Platforms
+### Add/remove role titles
 
-You can add more platforms to `config.json`:
+Edit `config.json` → `roles` array. These are the job titles searched for.
+
+### Add more ATS platforms
+
+Edit `config.json` → `platforms` array:
 
 ```json
 {
@@ -133,79 +110,27 @@ You can add more platforms to `config.json`:
 }
 ```
 
-> ⚠️ If you add Lever or Greenhouse, the scraper will still try to extract data
-> but the page structure might differ. You may need to tweak the scraper functions.
+Then update your Google PSE to include the new domains:
+1. Go to [programmablesearchengine.google.com](https://programmablesearchengine.google.com)
+2. Click your search engine → **Setup**
+3. Add the new domains under "Sites to search"
 
-### Changing the Schedule
+### Change the schedule
 
-Edit `.github/workflows/scrape.yml` and change the cron line:
-
+Edit `.github/workflows/scrape.yml`:
 ```yaml
-schedule:
-  - cron: '0 8 * * 1'   # Monday at 8am UTC
-  - cron: '0 8 * * 4'   # Add Thursday too for twice-weekly
-```
-
-Useful cron patterns:
-- `0 8 * * 1` = Every Monday at 8am UTC
-- `0 8 * * 1,4` = Monday and Thursday at 8am UTC
-- `0 9 * * *` = Every day at 9am UTC
-
----
-
-## 🔧 Troubleshooting
-
-### "No salary found" for most results
-This is normal! Most jobs don't list salaries. The scraper is filtering for the good ones.
-
-### Google rate limiting
-If you see errors during Google searches, try:
-- Increasing `SEARCH_DELAY_MS` in `index.js` (e.g., from 3000 to 5000)
-- Reducing the number of roles in `config.json`
-
-### GitHub Actions not running
-- Make sure the repo is **Public** (free Actions minutes)
-- Check the Actions tab is enabled in Settings → Actions → General
-
-### Google Sheets not updating
-- Verify the service account email has Editor access to your sheet
-- Check the secrets are set correctly (no extra spaces)
-- Look at the GitHub Actions log for error messages
-
----
-
-## 💡 Future Improvements You Could Make
-
-- **Add Lever & Greenhouse** support (add scraper functions in index.js)
-- **Email notifications** using GitHub Actions + a free email service
-- **Slack notifications** to get results in a Slack channel
-- **Historical tracking** to spot salary trends over time
-- **AI-powered post writing** by adding Claude API to polish the LinkedIn draft
-- **Filter by seniority level** to separate VP from Manager roles
-
----
-
-## 📁 Project Structure
-
-```
-people-jobs-scraper/
-├── .github/
-│   └── workflows/
-│       └── scrape.yml          # Automated weekly schedule
-├── index.js                     # Main scraper script
-├── upload-to-sheets.js          # Google Sheets integration
-├── config.json                  # Your search configuration
-├── package.json                 # Node.js dependencies
-├── .gitignore                   # Files to ignore in git
-├── SETUP.md                     # This file!
-└── output/                      # Generated each run (not in git)
-    ├── jobs-YYYY-MM-DD.csv
-    ├── linkedin-post-YYYY-MM-DD.txt
-    └── summary-YYYY-MM-DD.json
+cron: '0 13 * * 2'    # Tuesday 1pm GMT
+cron: '0 13 * * 1,4'  # Monday AND Thursday 1pm GMT
 ```
 
 ---
 
-## ❓ Need Help?
+## Troubleshooting
 
-If you get stuck, copy the error message from GitHub Actions and paste it into Claude — it can usually diagnose and fix the issue quickly!
+**"Missing environment variables"** → Check GitHub Secrets are set correctly (Settings → Secrets)
+
+**"API error: quota exceeded"** → You've hit 100 searches/day. Wait until tomorrow or reduce role count in config.json
+
+**0 results found** → Try broadening search terms or adding more platforms to search
+
+**Need help?** → Copy the error from GitHub Actions logs and paste it into Claude!
