@@ -1,11 +1,8 @@
 name: Weekly Job Scraper
 
 on:
-  # Run every Tuesday at 1pm GMT/UTC
   schedule:
     - cron: '0 13 * * 2'
-  
-  # Also allow manual trigger (click "Run workflow" in GitHub)
   workflow_dispatch:
 
 jobs:
@@ -21,14 +18,10 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies
-        run: npm install
-
-      - name: Verify Chrome is available
-        run: google-chrome-stable --version || google-chrome --version || echo "Chrome not found"
-
       - name: Run scraper
         run: node index.js
+        env:
+          SERPAPI_KEY: ${{ secrets.SERPAPI_KEY }}
 
       - name: Upload output as artifact
         uses: actions/upload-artifact@v4
