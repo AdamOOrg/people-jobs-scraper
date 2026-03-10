@@ -30,25 +30,6 @@ jobs:
           path: output/
           retention-days: 30
 
-      - name: Send email with LinkedIn post
-        run: |
-          POST=$(cat output/linkedin-post-*.txt 2>/dev/null || echo "No post generated this week.")
-          DATE=$(date +%Y-%m-%d)
-          
-          curl -s --request POST \
-            --url https://api.sendgrid.com/v3/mail/send \
-            --header "Authorization: Bearer ${{ secrets.SENDGRID_API_KEY }}" \
-            --header "Content-Type: application/json" \
-            --data "{
-              \"personalizations\": [{\"to\": [{\"email\": \"adam@openorg.fyi\"}]}],
-              \"from\": {\"email\": \"adam@openorg.fyi\", \"name\": \"Job Scraper\"},
-              \"subject\": \"Weekly People & HR Jobs — ${DATE}\",
-              \"content\": [{
-                \"type\": \"text/plain\",
-                \"value\": $(echo "$POST" | python3 -c 'import json,sys; print(json.dumps(sys.stdin.read()))')
-              }]
-            }"
-
       - name: Print LinkedIn post draft
         run: |
           echo "=================================="
