@@ -1,10 +1,10 @@
 /**
- * 🔍 Job Scraper for People/HR Leadership Roles
+ * ðŸ” Job Scraper for People/HR Leadership Roles
  * 
- * Uses Google Programmable Search Engine (free, 100 queries/day)
- * to find jobs on Ashby & Workable with salary info.
+ * Uses SerpApi (free, 100 searches/month) to search Google
+ * for jobs on Ashby & Workable with salary info.
  * 
- * No npm dependencies — uses Node.js built-in https.
+ * No npm dependencies â€” uses Node.js built-in https.
  */
 
 const https = require('https');
@@ -16,15 +16,14 @@ const config = require('./config.json');
 // CONFIG FROM ENVIRONMENT
 // ============================================================
 
-const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY;
-const GOOGLE_CSE_ID = process.env.GOOGLE_CSE_ID;
+const SERPAPI_KEY = process.env.SERPAPI_KEY;
 const SEARCH_DELAY_MS = 2000;
 const FETCH_DELAY_MS = 1000;
 
-if (!GOOGLE_API_KEY || !GOOGLE_CSE_ID) {
-  console.error('❌ Missing environment variables!');
-  console.error('   Set GOOGLE_API_KEY and GOOGLE_CSE_ID');
-  console.error('   See SETUP.md for instructions.');
+if (!SERPAPI_KEY) {
+  console.error('âŒ Missing environment variables!');
+  console.error('   Set SERPAPI_KEY');
+  console.error('   Sign up free at https://serpapi.com');
   process.exit(1);
 }
 
@@ -53,11 +52,11 @@ function httpGet(url) {
 }
 
 // ============================================================
-// GOOGLE PROGRAMMABLE SEARCH
+// SERPAPI SEARCH
 // ============================================================
 
-async function googleSearch(query, start = 1) {
-  const url = `https://www.googleapis.com/customsearch/v1?key=${GOOGLE_API_KEY}&cx=${GOOGLE_CSE_ID}&q=${encodeURIComponent(query)}&start=${start}&num=10`;
+async function googleSearch(query) {
+  const url = `https://serpapi.com/search.json?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(query)}&num=10&gl=uk`;
   
   const response = await httpGet(url);
   
@@ -65,21 +64,21 @@ async function googleSearch(query, start = 1) {
     const data = JSON.parse(response.body);
     
     if (data.error) {
-      console.log(`    ⚠️  API error: ${data.error.message}`);
+      console.log(`    âš ï¸  API error: ${data.error}`);
       return [];
     }
     
-    if (!data.items || data.items.length === 0) {
+    if (!data.organic_results || data.organic_results.length === 0) {
       return [];
     }
     
-    return data.items.map(item => ({
+    return data.organic_results.map(item => ({
       url: item.link,
       title: item.title,
       snippet: item.snippet || '',
     }));
   } catch (e) {
-    console.log(`    ⚠️  Parse error: ${e.message}`);
+    console.log(`    âš ï¸  Parse error: ${e.message}`);
     return [];
   }
 }
@@ -161,7 +160,7 @@ async function scrapeJobPage(url) {
 
     return { title, company, location, bodyText };
   } catch (error) {
-    console.log(`    ⚠️  Failed to fetch: ${url.substring(0, 60)}... - ${error.message}`);
+    console.log(`    âš ï¸  Failed to fetch: ${url.substring(0, 60)}... - ${error.message}`);
     return null;
   }
 }
@@ -198,16 +197,16 @@ function extractSalary(text) {
   if (!text) return null;
 
   const patterns = [
-    // $120,000 - $150,000 or £80k - £100k
-    /[\$£€]\s?[\d,]+[kK]?\s*[-–to]+\s*[\$£€]?\s?[\d,]+[kK]?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))?/gi,
+    // $120,000 - $150,000 or Â£80k - Â£100k
+    /[\$Â£â‚¬]\s?[\d,]+[kK]?\s*[-â€“to]+\s*[\$Â£â‚¬]?\s?[\d,]+[kK]?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))?/gi,
     // $120,000 per annum
-    /[\$£€]\s?[\d,]+[kK]?\+?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))/gi,
+    /[\$Â£â‚¬]\s?[\d,]+[kK]?\+?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))/gi,
     // Salary: $120,000
-    /(?:salary|compensation|pay)[:\s]+[\$£€]\s?[\d,]+[kK]?/gi,
+    /(?:salary|compensation|pay)[:\s]+[\$Â£â‚¬]\s?[\d,]+[kK]?/gi,
     // 120,000 - 150,000 GBP/USD
-    /[\d,]+[kK]?\s*[-–to]+\s*[\d,]+[kK]?\s*(?:GBP|USD|EUR|AUD|CAD|NZD)/gi,
+    /[\d,]+[kK]?\s*[-â€“to]+\s*[\d,]+[kK]?\s*(?:GBP|USD|EUR|AUD|CAD|NZD)/gi,
     // OTE: $200,000
-    /(?:OTE|on[- ]target[- ]earnings?)[:\s]*[\$£€]\s?[\d,]+[kK]?/gi,
+    /(?:OTE|on[- ]target[- ]earnings?)[:\s]*[\$Â£â‚¬]\s?[\d,]+[kK]?/gi,
   ];
 
   for (const pattern of patterns) {
@@ -232,21 +231,21 @@ function extractSalary(text) {
 // ============================================================
 
 function formatLinkedInPost(jobs, weekDate) {
-  let post = `🔍 This week's People & HR leadership roles with salaries (w/c ${weekDate})\n\n`;
+  let post = `ðŸ” This week's People & HR leadership roles with salaries (w/c ${weekDate})\n\n`;
   post += `Found ${jobs.length} role${jobs.length === 1 ? '' : 's'} with transparent pay:\n\n`;
 
   jobs.forEach((job, index) => {
     post += `${index + 1}. ${job.title}`;
-    if (job.company) post += ` — ${job.company}`;
+    if (job.company) post += ` â€” ${job.company}`;
     post += `\n`;
-    post += `   💰 ${job.salary}\n`;
-    if (job.location) post += `   📍 ${job.location}\n`;
-    post += `   🔗 ${job.url}\n\n`;
+    post += `   ðŸ’° ${job.salary}\n`;
+    if (job.location) post += `   ðŸ“ ${job.location}\n`;
+    post += `   ðŸ”— ${job.url}\n\n`;
   });
 
   post += `---\n`;
-  post += `♻️ Repost to help someone in your network find their next role.\n`;
-  post += `💬 Know of other roles with salaries shown? Drop them in the comments!\n\n`;
+  post += `â™»ï¸ Repost to help someone in your network find their next role.\n`;
+  post += `ðŸ’¬ Know of other roles with salaries shown? Drop them in the comments!\n\n`;
   post += `#SalaryTransparency #PeopleLeadership #HRJobs #Hiring`;
 
   return post;
@@ -272,16 +271,16 @@ function generateCSV(jobs, weekDate) {
 // ============================================================
 
 async function main() {
-  console.log('🚀 Starting job scraper...\n');
-  console.log('🔑 Using Google Programmable Search Engine API\n');
+  console.log('ðŸš€ Starting job scraper...\n');
+  console.log('ðŸ”‘ Using Google Programmable Search Engine API\n');
   
   const weekDate = new Date().toISOString().split('T')[0];
   const queries = buildSearchQueries();
   
-  console.log(`📋 Built ${queries.length} search queries\n`);
+  console.log(`ðŸ“‹ Built ${queries.length} search queries\n`);
 
   // Step 1: Search for job URLs
-  console.log('🔎 Step 1: Searching for job listings...\n');
+  console.log('ðŸ”Ž Step 1: Searching for job listings...\n');
   
   const allResults = [];
   let queryCount = 0;
@@ -299,13 +298,13 @@ async function main() {
       });
     });
 
-    console.log(`    → Found ${results.length} results`);
+    console.log(`    â†’ Found ${results.length} results`);
     
     await new Promise(resolve => setTimeout(resolve, SEARCH_DELAY_MS));
   }
 
-  console.log(`\n📊 API queries used: ${queryCount}/100 daily limit`);
-  console.log(`📊 Total results: ${allResults.length}`);
+  console.log(`\nðŸ“Š API queries used: ${queryCount}/100 daily limit`);
+  console.log(`ðŸ“Š Total results: ${allResults.length}`);
 
   // Deduplicate by URL
   const seenUrls = new Set();
@@ -316,10 +315,10 @@ async function main() {
     return true;
   });
 
-  console.log(`📊 Unique URLs to check: ${uniqueResults.length}\n`);
+  console.log(`ðŸ“Š Unique URLs to check: ${uniqueResults.length}\n`);
 
   // Step 2: Visit each page and extract salary info
-  console.log('📄 Step 2: Checking job pages for salary info...\n');
+  console.log('ðŸ“„ Step 2: Checking job pages for salary info...\n');
   
   const allJobs = [];
 
@@ -353,9 +352,9 @@ async function main() {
     });
 
     if (salary) {
-      console.log(`    ✅ Salary found: ${salary}`);
+      console.log(`    âœ… Salary found: ${salary}`);
     } else {
-      console.log(`    ❌ No salary listed`);
+      console.log(`    âŒ No salary listed`);
     }
 
     await new Promise(resolve => setTimeout(resolve, FETCH_DELAY_MS));
@@ -365,7 +364,7 @@ async function main() {
   const jobsWithSalary = allJobs.filter(j => j.salary);
   const jobsWithoutSalary = allJobs.filter(j => !j.salary);
 
-  console.log(`\n✨ Results:`);
+  console.log(`\nâœ¨ Results:`);
   console.log(`   ${jobsWithSalary.length} jobs WITH salary`);
   console.log(`   ${jobsWithoutSalary.length} jobs without salary`);
 
@@ -379,13 +378,13 @@ async function main() {
   if (allJobs.length > 0) {
     const allCsv = generateCSV(allJobs, weekDate);
     fs.writeFileSync(path.join(outputDir, `all-jobs-${weekDate}.csv`), allCsv);
-    console.log(`\n📁 All jobs CSV saved`);
+    console.log(`\nðŸ“ All jobs CSV saved`);
   }
 
   if (jobsWithSalary.length > 0) {
     const salaryCsv = generateCSV(jobsWithSalary, weekDate);
     fs.writeFileSync(path.join(outputDir, `salary-jobs-${weekDate}.csv`), salaryCsv);
-    console.log(`📁 Salary jobs CSV saved`);
+    console.log(`ðŸ“ Salary jobs CSV saved`);
   }
 
   // Save LinkedIn post
@@ -394,23 +393,23 @@ async function main() {
     fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.txt`), post);
     
     console.log('\n' + '='.repeat(60));
-    console.log('📣 LINKEDIN POST DRAFT:');
+    console.log('ðŸ“£ LINKEDIN POST DRAFT:');
     console.log('='.repeat(60) + '\n');
     console.log(post);
   } else if (allJobs.length > 0) {
-    console.log('\n⚠️  No salary jobs found, but found roles without salary.');
+    console.log('\nâš ï¸  No salary jobs found, but found roles without salary.');
     console.log('    Check all-jobs CSV for the full list.');
     
-    let post = `🔍 People & HR leadership roles this week (w/c ${weekDate})\n\n`;
+    let post = `ðŸ” People & HR leadership roles this week (w/c ${weekDate})\n\n`;
     post += `Found ${allJobs.length} role${allJobs.length === 1 ? '' : 's'} (salaries not always listed):\n\n`;
     allJobs.slice(0, 15).forEach((job, i) => {
       post += `${i + 1}. ${job.title}`;
-      if (job.company) post += ` — ${job.company}`;
-      post += `\n   🔗 ${job.url}\n\n`;
+      if (job.company) post += ` â€” ${job.company}`;
+      post += `\n   ðŸ”— ${job.url}\n\n`;
     });
     fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.txt`), post);
   } else {
-    console.log('\n⚠️  No matching jobs found this week.');
+    console.log('\nâš ï¸  No matching jobs found this week.');
   }
 
   // Save summary
@@ -426,7 +425,7 @@ async function main() {
     jobsWithSalary,
     allJobs,
   }, null, 2));
-  console.log(`📊 Summary saved`);
+  console.log(`ðŸ“Š Summary saved`);
 
   return jobsWithSalary;
 }
