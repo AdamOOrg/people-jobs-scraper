@@ -1,9 +1,9 @@
 {
   "platforms": [
     { "name": "Ashby", "domain": "ashbyhq.com" },
-    { "name": "Workable", "domain": "apply.workable.com" }
+    { "name": "Workable", "domain": "apply.workable.com" },
     { "name": "Welcome to the Jungle", "domain": "welcometothejungle.com" }
-  ]
+  ],
   "roles": [
     "VP People",
     "VP of People",
