@@ -12,10 +12,6 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config.json');
 
-// ============================================================
-// CONFIG FROM ENVIRONMENT
-// ============================================================
-
 const SERPAPI_KEY = process.env.SERPAPI_KEY;
 const SEARCH_DELAY_MS = 2000;
 const FETCH_DELAY_MS = 1000;
@@ -26,10 +22,6 @@ if (!SERPAPI_KEY) {
   console.error('   Sign up free at https://serpapi.com');
   process.exit(1);
 }
-
-// ============================================================
-// HTTPS HELPERS (zero dependencies)
-// ============================================================
 
 function httpGet(url) {
   return new Promise((resolve, reject) => {
@@ -51,27 +43,13 @@ function httpGet(url) {
   });
 }
 
-// ============================================================
-// SERPAPI SEARCH
-// ============================================================
-
 async function googleSearch(query) {
   const url = `https://serpapi.com/search.json?api_key=${SERPAPI_KEY}&engine=google&q=${encodeURIComponent(query)}&num=10&gl=uk&tbs=qdr:w`;
-  
   const response = await httpGet(url);
-  
   try {
     const data = JSON.parse(response.body);
-    
-    if (data.error) {
-      console.log(`    ⚠️  API error: ${data.error}`);
-      return [];
-    }
-    
-    if (!data.organic_results || data.organic_results.length === 0) {
-      return [];
-    }
-    
+    if (data.error) { console.log(`    ⚠️  API error: ${data.error}`); return []; }
+    if (!data.organic_results || data.organic_results.length === 0) return [];
     return data.organic_results.map(item => ({
       url: item.link,
       title: item.title,
@@ -83,13 +61,8 @@ async function googleSearch(query) {
   }
 }
 
-// ============================================================
-// BUILD SEARCH QUERIES
-// ============================================================
-
 function buildSearchQueries() {
   const queries = [];
-
   const roleGroups = [
     { label: 'VP People', terms: '"VP People" OR "VP of People" OR "Vice President People"' },
     { label: 'Head of People', terms: '"Head of People"' },
@@ -100,7 +73,6 @@ function buildSearchQueries() {
     { label: 'People Operations', terms: '"People Operations" OR "People Ops"' },
     { label: 'Head of HR', terms: '"Head of HR" OR "HR Director" OR "VP HR"' },
   ];
-
   for (const group of roleGroups) {
     for (const platform of config.platforms) {
       queries.push({
@@ -110,35 +82,23 @@ function buildSearchQueries() {
       });
     }
   }
-
   return queries;
 }
-
-// ============================================================
-// SCRAPE INDIVIDUAL JOB PAGES
-// ============================================================
 
 async function scrapeJobPage(url) {
   try {
     const response = await httpGet(url);
     if (response.status !== 200) return null;
-
     const html = response.body;
-
     const h1Match = html.match(/<h1[^>]*>(.*?)<\/h1>/si);
     const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/si);
-    
     let title = '';
     if (h1Match) title = stripHtml(h1Match[1]).trim();
     if (!title && titleMatch) title = stripHtml(titleMatch[1]).split(' - ')[0].trim();
-
     let company = '';
-    if (titleMatch) {
-      company = extractCompanyFromTitle(stripHtml(titleMatch[1]));
-    }
+    if (titleMatch) company = extractCompanyFromTitle(stripHtml(titleMatch[1]));
     const metaCompany = html.match(/property="og:site_name"\s+content="([^"]+)"/i);
     if (!company && metaCompany) company = metaCompany[1];
-
     let location = '';
     const locPatterns = [
       /data-testid="job-location"[^>]*>(.*?)</si,
@@ -149,9 +109,7 @@ async function scrapeJobPage(url) {
       const m = html.match(pat);
       if (m) { location = stripHtml(m[1]).trim(); break; }
     }
-
     const bodyText = stripHtml(html);
-
     return { title, company, location, bodyText };
   } catch (error) {
     console.log(`    ⚠️  Failed to fetch: ${url.substring(0, 60)}... - ${error.message}`);
@@ -164,14 +122,9 @@ function stripHtml(html) {
     .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, ' ')
     .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, ' ')
     .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/\s+/g, ' ').trim();
 }
 
 function extractCompanyFromTitle(pageTitle) {
@@ -183,13 +136,8 @@ function extractCompanyFromTitle(pageTitle) {
   return '';
 }
 
-// ============================================================
-// SALARY EXTRACTION
-// ============================================================
-
 function extractSalary(text) {
   if (!text) return null;
-
   const patterns = [
     /[\$£€]\s?[\d,]+[kK]?\s*[-–to]+\s*[\$£€]?\s?[\d,]+[kK]?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))?/gi,
     /[\$£€]\s?[\d,]+[kK]?\+?(?:\s*(?:per\s+(?:year|annum)|p\.?a\.?|annually|\/yr|\/year))/gi,
@@ -197,7 +145,6 @@ function extractSalary(text) {
     /[\d,]+[kK]?\s*[-–to]+\s*[\d,]+[kK]?\s*(?:GBP|USD|EUR|AUD|CAD|NZD)/gi,
     /(?:OTE|on[- ]target[- ]earnings?)[:\s]*[\$£€]\s?[\d,]+[kK]?/gi,
   ];
-
   for (const pattern of patterns) {
     const matches = text.match(pattern);
     if (matches && matches.length > 0) {
@@ -210,18 +157,12 @@ function extractSalary(text) {
       return match;
     }
   }
-
   return null;
 }
-
-// ============================================================
-// OUTPUT FORMATTERS
-// ============================================================
 
 function formatLinkedInPost(jobs, weekDate) {
   const divider = '───────────';
   let post = `💼 ${jobs.length} new People & HR jobs (WITH SALARIES 🤘) that I've seen across UK, Europe & US this week 👇\n`;
-
   jobs.forEach((job) => {
     post += `${divider}\n`;
     const company = job.company ? ` @ ${job.company}` : '';
@@ -230,16 +171,13 @@ function formatLinkedInPost(jobs, weekDate) {
     if (job.location && job.location !== 'Not specified') post += `📍 ${job.location}\n`;
     post += `🔗 ${job.url}\n`;
   });
-
   post += `${divider}\n`;
   post += `Good luck folks! Please share around if you know someone looking! 🖤`;
-
   return post;
 }
 
 function formatLinkedInHTML(jobs, weekDate) {
   const postText = formatLinkedInPost(jobs, weekDate);
-
   const rows = jobs.map(job => `
     <div class="job">
       <div class="job-title">${job.title}${job.company ? ` &mdash; ${job.company}` : ''}</div>
@@ -250,7 +188,6 @@ function formatLinkedInHTML(jobs, weekDate) {
       <a class="link" href="${job.url}" target="_blank">${job.url}</a>
     </div>
   `).join('');
-
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -275,11 +212,9 @@ function formatLinkedInHTML(jobs, weekDate) {
 <body>
   <h1>People &amp; HR Leadership Roles with Salaries</h1>
   <div class="subtitle">Week of ${weekDate} &nbsp;&middot;&nbsp; ${jobs.length} role${jobs.length === 1 ? '' : 's'} found</div>
-
   <div class="section-label">LinkedIn Post</div>
   <textarea id="post-text">${postText}</textarea>
   <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('post-text').value).then(function(){ this.textContent = 'Copied!'; }.bind(this))">Copy to clipboard</button>
-
   <div class="section-label">All Roles</div>
   ${rows}
 </body>
@@ -297,43 +232,27 @@ function generateCSV(jobs, weekDate) {
     `"${(job.platform || '').replace(/"/g, '""')}"`,
     job.url,
   ]);
-
   return [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
 }
-
-// ============================================================
-// MAIN
-// ============================================================
 
 async function main() {
   console.log('🚀 Starting job scraper...\n');
   console.log('🔑 Using SerpApi\n');
-  
+
   const weekDate = new Date().toISOString().split('T')[0];
   const queries = buildSearchQueries();
-  
   console.log(`📋 Built ${queries.length} search queries\n`);
-
   console.log('🔎 Step 1: Searching for job listings...\n');
-  
+
   const allResults = [];
   let queryCount = 0;
 
   for (const searchQuery of queries) {
     console.log(`  ${searchQuery.label}...`);
     queryCount++;
-    
     const results = await googleSearch(searchQuery.query);
-    
-    results.forEach(r => {
-      allResults.push({
-        ...r,
-        platform: searchQuery.platform,
-      });
-    });
-
+    results.forEach(r => allResults.push({ ...r, platform: searchQuery.platform }));
     console.log(`    → Found ${results.length} results`);
-    
     await new Promise(resolve => setTimeout(resolve, SEARCH_DELAY_MS));
   }
 
@@ -349,41 +268,44 @@ async function main() {
   });
 
   console.log(`📊 Unique URLs to check: ${uniqueResults.length}\n`);
-
   console.log('📄 Step 2: Checking job pages for salary info...\n');
-  
+
   const allJobs = [];
 
   for (const result of uniqueResults) {
     console.log(`  Checking: ${result.url.substring(0, 80)}...`);
-    
-    let salary = extractSalary(result.snippet);
-    let jobData = null;
-    
-    if (!salary) {
-      jobData = await scrapeJobPage(result.url);
-      if (jobData && jobData.bodyText) {
-        salary = extractSalary(jobData.bodyText);
+
+    try {
+      let salary = extractSalary(result.snippet);
+      let jobData = null;
+
+      if (!salary) {
+        jobData = await scrapeJobPage(result.url);
+        if (jobData && jobData.bodyText) {
+          salary = extractSalary(jobData.bodyText);
+        }
       }
-    }
 
-    const title = (jobData && jobData.title) || result.title.split(' - ')[0].trim() || '';
-    const company = (jobData && jobData.company) || extractCompanyFromTitle(result.title) || '';
-    const location = (jobData && jobData.location) || '';
+      const title = (jobData && jobData.title) || result.title.split(' - ')[0].trim() || '';
+      const company = (jobData && jobData.company) || extractCompanyFromTitle(result.title) || '';
+      const location = (jobData && jobData.location) || '';
 
-    allJobs.push({
-      title,
-      company,
-      salary: salary || null,
-      location: location || 'Not specified',
-      platform: result.platform,
-      url: result.url,
-    });
+      allJobs.push({
+        title,
+        company,
+        salary: salary || null,
+        location: location || 'Not specified',
+        platform: result.platform,
+        url: result.url,
+      });
 
-    if (salary) {
-      console.log(`    ✅ Salary found: ${salary}`);
-    } else {
-      console.log(`    ❌ No salary listed`);
+      if (salary) {
+        console.log(`    ✅ Salary found: ${salary}`);
+      } else {
+        console.log(`    ❌ No salary listed`);
+      }
+    } catch (err) {
+      console.log(`    ⚠️  Skipped (${err.message})`);
     }
 
     await new Promise(resolve => setTimeout(resolve, FETCH_DELAY_MS));
@@ -397,43 +319,30 @@ async function main() {
   console.log(`   ${jobsWithoutSalary.length} jobs without salary`);
 
   const outputDir = path.join(__dirname, 'output');
-  if (!fs.existsSync(outputDir)) {
-    fs.mkdirSync(outputDir, { recursive: true });
-  }
+  if (!fs.existsSync(outputDir)) fs.mkdirSync(outputDir, { recursive: true });
 
   if (allJobs.length > 0) {
-    const allCsv = generateCSV(allJobs, weekDate);
-    fs.writeFileSync(path.join(outputDir, `all-jobs-${weekDate}.csv`), allCsv);
+    fs.writeFileSync(path.join(outputDir, `all-jobs-${weekDate}.csv`), generateCSV(allJobs, weekDate));
     console.log(`\n📁 All jobs CSV saved`);
   }
 
   if (jobsWithSalary.length > 0) {
-    const salaryCsv = generateCSV(jobsWithSalary, weekDate);
-    fs.writeFileSync(path.join(outputDir, `salary-jobs-${weekDate}.csv`), salaryCsv);
+    fs.writeFileSync(path.join(outputDir, `salary-jobs-${weekDate}.csv`), generateCSV(jobsWithSalary, weekDate));
     console.log(`📁 Salary jobs CSV saved`);
-  }
 
-  if (jobsWithSalary.length > 0) {
     const post = formatLinkedInPost(jobsWithSalary, weekDate);
     fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.txt`), post);
-
-    const html = formatLinkedInHTML(jobsWithSalary, weekDate);
-    fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.html`), html);
+    fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.html`), formatLinkedInHTML(jobsWithSalary, weekDate));
 
     console.log('\n' + '='.repeat(60));
     console.log('📣 LINKEDIN POST DRAFT:');
     console.log('='.repeat(60) + '\n');
     console.log(post);
   } else if (allJobs.length > 0) {
-    console.log('\n⚠️  No salary jobs found, but found roles without salary.');
-    console.log('    Check all-jobs CSV for the full list.');
-
+    console.log('\n⚠️  No salary jobs found. Check all-jobs CSV.');
     let post = `People & HR leadership roles this week (w/c ${weekDate})\n\n`;
-    post += `Found ${allJobs.length} role${allJobs.length === 1 ? '' : 's'} (salaries not always listed):\n\n`;
     allJobs.slice(0, 15).forEach((job) => {
-      post += `${job.title}`;
-      if (job.company) post += ` — ${job.company}`;
-      post += `\n🔗 ${job.url}\n\n`;
+      post += `${job.title}${job.company ? ` — ${job.company}` : ''}\n🔗 ${job.url}\n\n`;
     });
     fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.txt`), post);
   } else {
@@ -442,19 +351,11 @@ async function main() {
 
   fs.writeFileSync(path.join(outputDir, `summary-${weekDate}.json`), JSON.stringify({
     date: weekDate,
-    stats: {
-      queriesUsed: queryCount,
-      totalResults: allResults.length,
-      uniqueUrls: uniqueResults.length,
-      withSalary: jobsWithSalary.length,
-      withoutSalary: jobsWithoutSalary.length,
-    },
+    stats: { queriesUsed: queryCount, totalResults: allResults.length, uniqueUrls: uniqueResults.length, withSalary: jobsWithSalary.length, withoutSalary: jobsWithoutSalary.length },
     jobsWithSalary,
     allJobs,
   }, null, 2));
   console.log(`📊 Summary saved`);
-
-  return jobsWithSalary;
 }
 
 main().catch(console.error);
