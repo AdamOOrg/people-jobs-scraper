@@ -61,17 +61,49 @@ async function googleSearch(query) {
   }
 }
 
+const ALLOWED_TITLES = [
+  'people partner',
+  'people director',
+  'people lead',
+  'people manager',
+  'people operations',
+  'people ops',
+  'head of people',
+  'vp people',
+  'vp of people',
+  'vice president people',
+  'chief people officer',
+  'director of people',
+  'head of hr',
+  'hr director',
+  'vp hr',
+  'vp of hr',
+  'vice president hr',
+  'hrbp',
+  'hr business partner',
+  'human resources business partner',
+  'chief hr officer',
+  'chro',
+];
+
+function isTitleAllowed(title) {
+  if (!title) return false;
+  const lower = title.toLowerCase();
+  return ALLOWED_TITLES.some(allowed => lower.includes(allowed));
+}
+
 function buildSearchQueries() {
   const queries = [];
   const roleGroups = [
     { label: 'VP People', terms: '"VP People" OR "VP of People" OR "Vice President People"' },
     { label: 'Head of People', terms: '"Head of People"' },
-    { label: 'Chief People Officer', terms: '"Chief People Officer" OR "CPO"' },
+    { label: 'Chief People Officer', terms: '"Chief People Officer"' },
     { label: 'People Director', terms: '"People Director" OR "Director of People"' },
     { label: 'People Lead/Manager', terms: '"People Lead" OR "People Manager"' },
     { label: 'People Partner', terms: '"People Partner"' },
-    { label: 'People Operations', terms: '"People Operations" OR "People Ops"' },
+    { label: 'People Operations', terms: '"People Operations Manager" OR "People Operations Lead" OR "People Ops Lead"' },
     { label: 'Head of HR', terms: '"Head of HR" OR "HR Director" OR "VP HR"' },
+    { label: 'HR Business Partner', terms: '"HR Business Partner" OR "HRBP"' },
   ];
   for (const group of roleGroups) {
     for (const platform of config.platforms) {
@@ -90,25 +122,39 @@ async function scrapeJobPage(url) {
     const response = await httpGet(url);
     if (response.status !== 200) return null;
     const html = response.body;
+
     const h1Match = html.match(/<h1[^>]*>(.*?)<\/h1>/si);
     const titleMatch = html.match(/<title[^>]*>(.*?)<\/title>/si);
+
+    // Use h1 as title — it's the actual job title, not the full page title
     let title = '';
     if (h1Match) title = stripHtml(h1Match[1]).trim();
-    if (!title && titleMatch) title = stripHtml(titleMatch[1]).split(' - ')[0].trim();
-    let company = '';
-    if (titleMatch) company = extractCompanyFromTitle(stripHtml(titleMatch[1]));
+    // Fall back to page title but only take the first segment before any separator
+    if (!title && titleMatch) {
+      title = stripHtml(titleMatch[1]).split(/\s*[–\-|]\s*/)[0].trim();
+    }
+    // Strip gender markers e.g. F/H, H/F, (m/f/d)
+    title = title.replace(/\s*[\(\[]?[MFmf]\/[HFhf][\)\]]?\s*$/i, '').trim();
+
+    // Company: prefer og:site_name (reliable), fall back to page title parsing
     const metaCompany = html.match(/property="og:site_name"\s+content="([^"]+)"/i);
-    if (!company && metaCompany) company = metaCompany[1];
+    let company = metaCompany ? metaCompany[1] : extractCompanyFromTitle(stripHtml(titleMatch ? titleMatch[1] : ''));
+
+    // Extract location
     let location = '';
     const locPatterns = [
       /data-testid="job-location"[^>]*>(.*?)</si,
-      /class="[^"]*location[^"]*"[^>]*>(.*?)</si,
       /data-ui="job-location"[^>]*>(.*?)</si,
+      /class="[^"]*location[^"]*"[^>]*>(.*?)</si,
+      /"jobLocation"[^}]*?"addressLocality"\s*:\s*"([^"]+)"/i,
+      /"addressLocality"\s*:\s*"([^"]+)"/i,
+      /property="og:locality"\s+content="([^"]+)"/i,
     ];
     for (const pat of locPatterns) {
       const m = html.match(pat);
-      if (m) { location = stripHtml(m[1]).trim(); break; }
+      if (m && m[1] && m[1].trim().length > 1) { location = stripHtml(m[1]).trim(); break; }
     }
+
     const bodyText = stripHtml(html);
     return { title, company, location, bodyText };
   } catch (error) {
@@ -130,10 +176,17 @@ function stripHtml(html) {
 function extractCompanyFromTitle(pageTitle) {
   if (!pageTitle) return '';
   const atMatch = pageTitle.match(/at\s+(.+?)(?:\s*[-|]|$)/i);
-  if (atMatch) return atMatch[1].trim();
+  if (atMatch) return cleanCompany(atMatch[1].trim());
   const dashParts = pageTitle.split(' - ');
-  if (dashParts.length >= 2) return dashParts[dashParts.length - 1].trim();
+  if (dashParts.length >= 2) return cleanCompany(dashParts[dashParts.length - 1].trim());
   return '';
+}
+
+function cleanCompany(name) {
+  return name
+    .replace(/\s*[@|]\s*(Jobs|Careers|Job Board|Apply|Hiring)\s*$/i, '')
+    .replace(/\s+(Jobs|Careers|Job Board)$/i, '')
+    .trim();
 }
 
 function extractSalary(text) {
@@ -176,8 +229,9 @@ function formatLinkedInPost(jobs, weekDate) {
   return post;
 }
 
-function formatLinkedInHTML(jobs, weekDate) {
+function formatLinkedInHTML(jobs, jobsWithoutSalary, weekDate) {
   const postText = formatLinkedInPost(jobs, weekDate);
+
   const rows = jobs.map(job => `
     <div class="job">
       <div class="job-title">${job.title}${job.company ? ` &mdash; ${job.company}` : ''}</div>
@@ -188,6 +242,18 @@ function formatLinkedInHTML(jobs, weekDate) {
       <a class="link" href="${job.url}" target="_blank">${job.url}</a>
     </div>
   `).join('');
+
+  const noSalaryRows = jobsWithoutSalary.map(job => `
+    <div class="job no-salary">
+      <div class="job-title">${job.title}${job.company ? ` &mdash; ${job.company}` : ''}</div>
+      <div class="meta">
+        <span class="platform">📋 ${job.platform}</span>
+        ${job.location && job.location !== 'Not specified' ? `<span class="location">📍 ${job.location}</span>` : ''}
+      </div>
+      <a class="link" href="${job.url}" target="_blank">${job.url}</a>
+    </div>
+  `).join('');
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -198,25 +264,34 @@ function formatLinkedInHTML(jobs, weekDate) {
     h1 { font-size: 1.3rem; font-weight: 700; margin-bottom: 4px; }
     .subtitle { color: #666; font-size: 0.9rem; margin-bottom: 32px; }
     .job { background: white; border: 1px solid #e5e5e5; border-radius: 8px; padding: 16px 20px; margin-bottom: 12px; }
+    .job.no-salary { background: #fafafa; border-color: #eee; opacity: 0.85; }
     .job-title { font-weight: 600; font-size: 1rem; margin-bottom: 6px; }
     .meta { display: flex; gap: 16px; font-size: 0.9rem; margin-bottom: 8px; flex-wrap: wrap; }
     .salary { color: #1a7f37; font-weight: 500; }
+    .platform { color: #888; font-size: 0.8rem; }
     .location { color: #555; }
     .link { font-size: 0.8rem; color: #0073b1; word-break: break-all; }
     .copy-btn { display: inline-block; margin-bottom: 24px; padding: 10px 20px; background: #0073b1; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 0.9rem; }
     .copy-btn:hover { background: #005f8e; }
     textarea { width: 100%; height: 400px; font-family: inherit; font-size: 0.85rem; padding: 12px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 12px; resize: vertical; box-sizing: border-box; }
     .section-label { font-weight: 600; margin: 32px 0 12px; font-size: 0.85rem; color: #444; text-transform: uppercase; letter-spacing: 0.05em; }
+    .section-note { font-size: 0.8rem; color: #888; margin-top: -8px; margin-bottom: 12px; }
   </style>
 </head>
 <body>
   <h1>People &amp; HR Leadership Roles with Salaries</h1>
-  <div class="subtitle">Week of ${weekDate} &nbsp;&middot;&nbsp; ${jobs.length} role${jobs.length === 1 ? '' : 's'} found</div>
+  <div class="subtitle">Week of ${weekDate} &nbsp;&middot;&nbsp; ${jobs.length} with salary &nbsp;&middot;&nbsp; ${jobsWithoutSalary.length} without</div>
+
   <div class="section-label">LinkedIn Post</div>
   <textarea id="post-text">${postText}</textarea>
   <button class="copy-btn" onclick="navigator.clipboard.writeText(document.getElementById('post-text').value).then(function(){ this.textContent = 'Copied!'; }.bind(this))">Copy to clipboard</button>
-  <div class="section-label">All Roles</div>
+
+  <div class="section-label">Roles with salary ✅</div>
   ${rows}
+
+  <div class="section-label">Also found — no salary listed 👀</div>
+  <div class="section-note">Check these manually — salary may be hidden in JS (especially Ashby)</div>
+  ${noSalaryRows}
 </body>
 </html>`;
 }
@@ -286,23 +361,28 @@ async function main() {
         }
       }
 
-      const title = (jobData && jobData.title) || result.title.split(' - ')[0].trim() || '';
+      const rawTitle = (jobData && jobData.title) || result.title || '';
+      const title = rawTitle.split(/\s*[–\-|]\s*/)[0].trim();
       const company = (jobData && jobData.company) || extractCompanyFromTitle(result.title) || '';
       const location = (jobData && jobData.location) || '';
 
-      allJobs.push({
-        title,
-        company,
-        salary: salary || null,
-        location: location || 'Not specified',
-        platform: result.platform,
-        url: result.url,
-      });
-
-      if (salary) {
-        console.log(`    ✅ Salary found: ${salary}`);
+      if (!isTitleAllowed(title)) {
+        console.log(`    🚫 Filtered out (title not relevant): ${title}`);
       } else {
-        console.log(`    ❌ No salary listed`);
+        allJobs.push({
+          title,
+          company,
+          salary: salary || null,
+          location: location || 'Not specified',
+          platform: result.platform,
+          url: result.url,
+        });
+
+        if (salary) {
+          console.log(`    ✅ Salary found: ${salary}`);
+        } else {
+          console.log(`    ❌ No salary listed`);
+        }
       }
     } catch (err) {
       console.log(`    ⚠️  Skipped (${err.message})`);
@@ -332,7 +412,9 @@ async function main() {
 
     const post = formatLinkedInPost(jobsWithSalary, weekDate);
     fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.txt`), post);
-    fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.html`), formatLinkedInHTML(jobsWithSalary, weekDate));
+
+    const html = formatLinkedInHTML(jobsWithSalary, jobsWithoutSalary, weekDate);
+    fs.writeFileSync(path.join(outputDir, `linkedin-post-${weekDate}.html`), html);
 
     console.log('\n' + '='.repeat(60));
     console.log('📣 LINKEDIN POST DRAFT:');
